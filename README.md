@@ -28,8 +28,11 @@ poleceniem `npm run build:pages`.
 - Otwieraj pliki `.abc`, edytuj tekst i eksportuj wynik do nowego pliku.
 - Wybierz narzędzie nuty lub pauzy i kliknij zapis, aby dodać element. Ustaw
 	wartość rytmiczną, oktawę i znak chromatyczny na pasku narzędzi.
-- W trybie zaznaczania przeciągnij pojedynczą nutę w pionie, aby zmienić jej
-	wysokość. Zaznaczony element można usunąć klawiszem Backspace.
+- W trybie zaznaczania przeciągnij nutę w pionie, aby zmienić jej wysokość.
+	Zaznaczone elementy można usunąć przyciskiem „Usuń zaznaczenie”.
+- Przeciągnij ramkę po pustym miejscu partytury, aby zaznaczyć wiele nut.
+	Zaznaczone nuty można usuwać razem, przesuwać w pionie lub przenosić poziomo
+	w obrębie jednego głosu; poziome przesunięcie zachowuje wartości rytmiczne.
 - Cofaj i ponawiaj przyciskami albo skrótami Ctrl+Z i Ctrl+Shift+Z.
 - Nagłówki i pozostały tekst ABC pozostają zachowane; graficzne edycje
 	podmieniają wyłącznie odpowiedni fragment źródła.

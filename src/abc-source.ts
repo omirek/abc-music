@@ -20,6 +20,16 @@ export interface NoteShape {
   matchEnd: number;
 }
 
+export interface SourceRange {
+  start: number;
+  end: number;
+}
+
+export interface NoteRangeEdit {
+  code: string;
+  ranges: SourceRange[];
+}
+
 export function findNoteShape(source: string): NoteShape | null {
   const matches = [...source.matchAll(NOTE_PATTERN)];
   if (matches.length !== 1) return null;
@@ -38,6 +48,68 @@ export function findNoteShape(source: string): NoteShape | null {
     matchStart: match.index ?? 0,
     matchEnd: (match.index ?? 0) + token.length,
   };
+}
+
+export function transformNoteRanges(
+  code: string,
+  ranges: SourceRange[],
+  steps: number,
+  insertion?: { position: number; after: boolean },
+): NoteRangeEdit {
+  const ordered = [...new Map(ranges
+    .filter(({ start, end }) => start >= 0 && end > start && end <= code.length)
+    .map((range) => [`${range.start}:${range.end}`, range])).values()]
+    .sort((left, right) => left.start - right.start);
+  const selected: SourceRange[] = [];
+  for (const range of ordered) {
+    if (!selected.length || range.start >= selected[selected.length - 1].end) selected.push(range);
+  }
+  const replacements = selected.map((range) => {
+    const transposed = steps === 0 ? null : transposeNote(code, range.start, range.end, steps);
+    const text = transposed
+      ? transposed.slice(range.start, transposed.length - (code.length - range.end))
+      : code.slice(range.start, range.end);
+    return { ...range, text };
+  });
+  const canMove = insertion !== undefined
+    && !selected.some(({ start, end }) => insertion.position >= start && insertion.position <= end);
+
+  if (canMove && insertion) {
+    const remainder = replacements.reduceRight(
+      (result, range) => result.slice(0, range.start) + result.slice(range.end),
+      code,
+    );
+    const position = insertion.position - selected
+      .filter((range) => range.end <= insertion.position)
+      .reduce((total, range) => total + range.end - range.start, 0);
+    const block = replacements.map(({ text }) => text).join(' ');
+    const inserted = insertion.after ? ` ${block}` : `${block} `;
+    const start = position + (insertion.after ? 1 : 0);
+    let offset = start;
+    const nextRanges = replacements.map(({ text }) => {
+      const range = { start: offset, end: offset + text.length };
+      offset = range.end + 1;
+      return range;
+    });
+    return {
+      code: remainder.slice(0, position) + inserted + remainder.slice(position),
+      ranges: nextRanges,
+    };
+  }
+
+  let result = '';
+  let inputPosition = 0;
+  let outputPosition = 0;
+  const nextRanges = replacements.map(({ start, end, text }) => {
+    const unchanged = code.slice(inputPosition, start);
+    result += unchanged + text;
+    const range = { start: outputPosition + unchanged.length, end: outputPosition + unchanged.length + text.length };
+    outputPosition += unchanged.length + text.length;
+    inputPosition = end;
+    return range;
+  });
+  result += code.slice(inputPosition);
+  return { code: result, ranges: nextRanges };
 }
 
 export function transposeNote(code: string, start: number, end: number, steps: number): string | null {

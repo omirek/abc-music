@@ -1,5 +1,6 @@
 import * as ABCJS from 'abcjs';
-import { findNoteShape, inspectABC, makeNoteToken, noteLengthSuffix, STARTER_ABC, transposeNote, tuneInsertionPoint } from './abc-source';
+import { findNoteShape, inspectABC, makeNoteToken, noteLengthSuffix, STARTER_ABC, transformNoteRanges, tuneInsertionPoint } from './abc-source';
+import type { SourceRange } from './abc-source';
 import { History } from './history';
 import './styles.css';
 
@@ -105,16 +106,28 @@ const accidentalControl = document.querySelector<HTMLSelectElement>('#accidental
 let history = new History(STARTER_ABC);
 let code = STARTER_ABC;
 let tool: Tool = 'select';
-let selectedRange: { start: number; end: number } | null = null;
+let selectedRanges: SourceRange[] = [];
 let visualObjects: ABCJS.TuneObject[] = [];
 let renderTimer = 0;
 let historyTimer = 0;
 let playback: ABCJS.TimingCallbacks | null = null;
 let audioContext: AudioContext | null = null;
 let highlightedElements: HTMLElement[] = [];
+let scoreGesture: ScoreGesture | null = null;
+
+type ScoreGesture =
+  | { kind: 'box'; pointerId: number; startX: number; startY: number; moved: boolean; box: HTMLDivElement }
+  | { kind: 'notes'; pointerId: number; startX: number; startY: number; moved: boolean; selectable: ABCJS.Selectable; ranges: SourceRange[] };
 
 editor.value = code;
 score.addEventListener('click', onEmptyScoreClick);
+score.addEventListener('pointerdown', onScorePointerDown, true);
+score.addEventListener('pointermove', onScorePointerMove, true);
+score.addEventListener('pointerup', onScorePointerUp, true);
+score.addEventListener('pointercancel', onScorePointerCancel, true);
+score.addEventListener('touchstart', suppressScoreTouch, true);
+score.addEventListener('touchmove', suppressScoreTouch, { capture: true, passive: false });
+score.addEventListener('touchend', suppressScoreTouch, true);
 renderScore();
 
 function renderScore(): void {
@@ -154,6 +167,7 @@ function renderScore(): void {
     item.textContent = `Nie można wyświetlić partytury: ${message}`;
     score.append(item);
   }
+  applySelectionStyles();
 }
 
 function updateMetadata(): void {
@@ -169,11 +183,11 @@ function updateLineNumbers(): void {
   document.querySelector('#line-count')!.textContent = `${lineCount} ${lineCount === 1 ? 'linia' : 'linii'}`;
 }
 
-function updateCode(nextCode: string, record = true): void {
+function updateCode(nextCode: string, record = true, selection: SourceRange[] = []): void {
   code = nextCode;
   editor.value = code;
   if (record) history.push(code);
-  selectedRange = null;
+  selectedRanges = selection;
   stopPlayback();
   renderScore();
   document.querySelector('#save-state')!.textContent = 'Gotowe do edycji';
@@ -181,7 +195,7 @@ function updateCode(nextCode: string, record = true): void {
 
 function scheduleRender(): void {
   code = editor.value;
-  selectedRange = null;
+  selectedRanges = [];
   updateLineNumbers();
   document.querySelector('#save-state')!.textContent = 'Niezapisane zmiany';
   window.clearTimeout(renderTimer);
@@ -201,7 +215,7 @@ function changeTool(nextTool: Tool): void {
     button.classList.toggle('active', button.dataset.tool === tool);
   });
   const hints: Record<Tool, string> = {
-    select: 'Przeciągnij nutę w pionie, aby zmienić wysokość',
+    select: 'Przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
     note: 'Kliknij partyturę, aby wstawić nutę',
     rest: 'Kliknij partyturę, aby wstawić pauzę',
   };
@@ -238,15 +252,247 @@ function onScoreElement(
   }
 
   if (drag.step !== 0 && element.el_type === 'note' && (element.pitches?.length ?? 1) === 1) {
-    const updated = transposeNote(code, start, end, drag.step);
-    if (updated) updateCode(updated);
+    const updated = transformNoteRanges(code, [{ start, end }], drag.step);
+    if (updated.code !== code) updateCode(updated.code, true, updated.ranges);
     return;
   }
 
-  selectedRange = { start, end };
+  setSelectedRanges([{ start, end }]);
   editor.focus();
   editor.setSelectionRange(start, end);
   document.querySelector('#selection-status')!.textContent = `Zaznaczono: ${element.rest ? 'pauza' : 'nuta'} · takt ${element.barNumber ?? 1}`;
+}
+
+function getSelectableRange(selectable: ABCJS.Selectable): SourceRange | null {
+  const element = selectable.absEl.abcelem;
+  const { startChar: start, endChar: end } = element;
+  if (element.el_type !== 'note' || start === undefined || end === undefined || start < 0 || end <= start) return null;
+  return { start, end };
+}
+
+function isRangeSelected(range: SourceRange): boolean {
+  return selectedRanges.some((selected) => selected.start === range.start && selected.end === range.end);
+}
+
+function setSelectedRanges(ranges: SourceRange[]): void {
+  selectedRanges = [...new Map(ranges.map((range) => [`${range.start}:${range.end}`, range])).values()]
+    .sort((left, right) => left.start - right.start);
+  applySelectionStyles();
+}
+
+function applySelectionStyles(): void {
+  for (const selectable of visualObjects[0]?.getSelectableArray() ?? []) {
+    const range = getSelectableRange(selectable);
+    selectable.svgEl.classList.toggle('abcjs-selected-item', Boolean(range && isRangeSelected(range)));
+  }
+}
+
+function selectableFromTarget(target: Element): ABCJS.Selectable | null {
+  const item = target.closest('[selectable]');
+  if (!item) return null;
+  const index = Number(item.getAttribute('data-index'));
+  return Number.isInteger(index) ? visualObjects[0]?.getSelectableArray()[index] ?? null : null;
+}
+
+function onScorePointerDown(event: PointerEvent): void {
+  if (tool !== 'select' || event.button !== 0 || scoreGesture) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  const selectable = selectableFromTarget(target);
+  const range = selectable ? getSelectableRange(selectable) : null;
+  if (selectable && range) {
+    const ranges = isRangeSelected(range) ? selectedRanges : [range];
+    scoreGesture = {
+      kind: 'notes',
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      selectable,
+      ranges,
+    };
+    setSelectedRanges(ranges);
+  } else {
+    const box = document.createElement('div');
+    box.className = 'score-selection-box';
+    document.body.append(box);
+    scoreGesture = {
+      kind: 'box',
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      box,
+    };
+  }
+  score.classList.add('score-interacting');
+  score.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function suppressScoreTouch(event: TouchEvent): void {
+  if (tool !== 'select') return;
+  if (event.type === 'touchmove' && scoreGesture) event.preventDefault();
+  event.stopPropagation();
+}
+
+function onScorePointerMove(event: PointerEvent): void {
+  const gesture = scoreGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - gesture.startX;
+  const deltaY = event.clientY - gesture.startY;
+  if (Math.hypot(deltaX, deltaY) > 5) gesture.moved = true;
+  if (gesture.kind === 'box') {
+    const left = Math.min(gesture.startX, event.clientX);
+    const top = Math.min(gesture.startY, event.clientY);
+    gesture.box.style.left = `${left}px`;
+    gesture.box.style.top = `${top}px`;
+    gesture.box.style.width = `${Math.abs(deltaX)}px`;
+    gesture.box.style.height = `${Math.abs(deltaY)}px`;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function onScorePointerUp(event: PointerEvent): void {
+  const gesture = scoreGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+  scoreGesture = null;
+  score.classList.remove('score-interacting');
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (gesture.kind === 'box') {
+    gesture.box.remove();
+    if (!gesture.moved) {
+      setSelectedRanges([]);
+      document.querySelector('#selection-status')!.textContent = 'Gotowe do edycji';
+      return;
+    }
+    const box = {
+      left: Math.min(gesture.startX, event.clientX),
+      right: Math.max(gesture.startX, event.clientX),
+      top: Math.min(gesture.startY, event.clientY),
+      bottom: Math.max(gesture.startY, event.clientY),
+    };
+    const ranges = (visualObjects[0]?.getSelectableArray() ?? [])
+      .filter((selectable) => {
+        const range = getSelectableRange(selectable);
+        const rect = selectable.svgEl.getBoundingClientRect();
+        return range !== null && rect.width > 0 && rect.height > 0
+          && rect.right >= box.left && rect.left <= box.right
+          && rect.bottom >= box.top && rect.top <= box.bottom;
+      })
+      .map((selectable) => getSelectableRange(selectable))
+      .filter((range): range is SourceRange => range !== null);
+    setSelectedRanges(ranges);
+    document.querySelector('#selection-status')!.textContent = ranges.length
+      ? `Zaznaczono ${ranges.length} ${ranges.length === 1 ? 'element' : ranges.length < 5 ? 'elementy' : 'elementów'}`
+      : 'Nie zaznaczono elementów';
+    return;
+  }
+
+  if (!gesture.moved) {
+    setSelectedRanges(gesture.ranges);
+    const clickedRange = getSelectableRange(gesture.selectable);
+    if (clickedRange && gesture.ranges.length === 1) {
+      editor.focus();
+      editor.setSelectionRange(clickedRange.start, clickedRange.end);
+    }
+    document.querySelector('#selection-status')!.textContent = gesture.ranges.length > 1
+      ? `Zaznaczono ${gesture.ranges.length} elementów`
+      : `Zaznaczono: ${gesture.selectable.absEl.abcelem.rest ? 'pauza' : 'nuta'} · takt ${gesture.selectable.absEl.abcelem.barNumber ?? 1}`;
+    return;
+  }
+
+  const deltaY = event.clientY - gesture.startY;
+  const staffStep = getStaffStepPixels(gesture.selectable, gesture.startY);
+  const steps = staffStep ? Math.round(deltaY / staffStep) : 0;
+  const horizontalMove = Math.abs(event.clientX - gesture.startX) > 12;
+  const insertion = horizontalMove
+    ? findDropInsertion(event.clientX, event.clientY, gesture.selectable)
+    : undefined;
+  const edit = transformNoteRanges(code, gesture.ranges, steps, insertion);
+  if (edit.code !== code) {
+    updateCode(edit.code, true, edit.ranges);
+    document.querySelector('#selection-status')!.textContent = 'Zaznaczenie przeniesione';
+  } else {
+    setSelectedRanges(gesture.ranges);
+    document.querySelector('#selection-status')!.textContent = steps === 0 && !horizontalMove
+      ? 'Zaznaczono elementy'
+      : 'Nie można przenieść zaznaczenia w to miejsce';
+  }
+}
+
+function onScorePointerCancel(event: PointerEvent): void {
+  if (!scoreGesture || scoreGesture.pointerId !== event.pointerId) return;
+  if (scoreGesture.kind === 'box') scoreGesture.box.remove();
+  scoreGesture = null;
+  score.classList.remove('score-interacting');
+}
+
+function getSelectableVoice(selectable: ABCJS.Selectable): number | null {
+  const voice = /(?:^|\s)abcjs-v(\d+)(?:\s|$)/.exec(selectable.svgEl.getAttribute('class') ?? '')?.[1];
+  return voice === undefined ? null : Number(voice);
+}
+
+function findDropInsertion(
+  clientX: number,
+  clientY: number,
+  anchor: ABCJS.Selectable,
+): { position: number; after: boolean } | undefined {
+  const selected = selectedRanges;
+  const voice = getSelectableVoice(anchor);
+  if (voice === null) return undefined;
+  const selectedSelectables = (visualObjects[0]?.getSelectableArray() ?? [])
+    .filter((selectable) => {
+      const range = getSelectableRange(selectable);
+      return range && selected.some((item) => item.start === range.start && item.end === range.end);
+    });
+  if (selectedSelectables.some((selectable) => getSelectableVoice(selectable) !== voice)) return undefined;
+  const nearest = (visualObjects[0]?.getSelectableArray() ?? [])
+    .map((selectable) => ({ selectable, range: getSelectableRange(selectable), rect: selectable.svgEl.getBoundingClientRect() }))
+    .filter(({ selectable, range, rect }) => range !== null && rect.width > 0 && rect.height > 0
+      && getSelectableVoice(selectable) === voice
+      && !selected.some((item) => item.start === range?.start && item.end === range?.end))
+    .sort((left, right) => {
+      const leftX = (left.rect.left + left.rect.right) / 2;
+      const leftY = (left.rect.top + left.rect.bottom) / 2;
+      const rightX = (right.rect.left + right.rect.right) / 2;
+      const rightY = (right.rect.top + right.rect.bottom) / 2;
+      return Math.hypot(clientX - leftX, clientY - leftY) - Math.hypot(clientX - rightX, clientY - rightY);
+    })[0];
+  if (!nearest?.range) return undefined;
+  const center = (nearest.rect.left + nearest.rect.right) / 2;
+  return {
+    position: clientX < center ? nearest.range.start : nearest.range.end,
+    after: clientX >= center,
+  };
+}
+
+function getStaffStepPixels(selectable: ABCJS.Selectable, clientY: number): number | null {
+  const svg = selectable.svgEl.ownerSVGElement;
+  if (!svg) return null;
+  const ys = [...svg.querySelectorAll<SVGGraphicsElement>('.abcjs-staff path')]
+    .map((line) => {
+      const rect = line.getBoundingClientRect();
+      return Math.round(rect.top + rect.height / 2);
+    })
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  const groups: number[][] = [];
+  for (const y of [...new Set(ys)]) {
+    const current = groups[groups.length - 1];
+    if (!current || y - current[current.length - 1] > 22) groups.push([y]);
+    else current.push(y);
+  }
+  const staff = groups
+    .filter((group) => group.length >= 5)
+    .map((group) => group.slice(0, 5))
+    .sort((left, right) => Math.abs(clientY - (left[0] + left[4]) / 2) - Math.abs(clientY - (right[0] + right[4]) / 2))[0];
+  if (!staff) return null;
+  return (staff[4] - staff[0]) / 8 || null;
 }
 
 function selectedOctave(staffOctave: number): number {
@@ -324,14 +570,17 @@ function redo(): void {
 }
 
 function deleteSelection(): void {
-  const range = selectedRange ?? (editor.selectionStart !== editor.selectionEnd
-    ? { start: editor.selectionStart, end: editor.selectionEnd }
-    : null);
-  if (!range) {
+  const ranges = selectedRanges.length ? selectedRanges : editor.selectionStart !== editor.selectionEnd
+    ? [{ start: editor.selectionStart, end: editor.selectionEnd }]
+    : [];
+  if (!ranges.length) {
     document.querySelector('#selection-status')!.textContent = 'Zaznacz nutę lub fragment kodu';
     return;
   }
-  updateCode(code.slice(0, range.start) + code.slice(range.end));
+  const nextCode = [...ranges]
+    .sort((left, right) => right.start - left.start)
+    .reduce((current, range) => current.slice(0, range.start) + current.slice(range.end), code);
+  updateCode(nextCode);
   document.querySelector('#selection-status')!.textContent = 'Zaznaczenie usunięte';
 }
 
