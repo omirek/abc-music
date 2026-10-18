@@ -436,8 +436,7 @@ function onScorePointerUp(event: PointerEvent): void {
     return;
   }
 
-  if (Math.abs(deltaX) > 12) {
-    if (gesture.ranges.length < 2) return;
+  if (gesture.ranges.length > 1 && Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY)) {
     const insertion = findDropInsertion(event.clientX, event.clientY, gesture.selectable, gesture.ranges);
     if (!insertion) {
       document.querySelector('#selection-status')!.textContent = 'Nie można przenieść zaznaczenia w to miejsce';
