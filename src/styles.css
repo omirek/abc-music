@@ -68,7 +68,7 @@ button { color: inherit; }
 .code-language { color: #9bafa6; font-size: 9px; }
 .editor-wrap { flex: 1; min-height: 340px; display: flex; overflow: auto; padding: 16px 0; }
 .line-numbers { flex: 0 0 42px; overflow: hidden; padding: 0 10px 0 0; color: #70857b; text-align: right; white-space: pre; font: 12px/1.8 'SFMono-Regular', Consolas, monospace; user-select: none; }
-#abc-editor { flex: 1; min-width: 0; min-height: 330px; resize: none; padding: 0 17px 0 2px; border: 0; outline: 0; background: transparent; color: #e6d5ac; caret-color: #ef7655; white-space: pre; tab-size: 2; font: 12px/1.8 'SFMono-Regular', Consolas, monospace; }
+#abc-editor { flex: 1; min-width: 0; min-height: 330px; resize: none; padding: 0 17px 0 2px; border: 0; outline: 0; background: transparent; color: #e6d5ac; caret-color: #ef7655; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; font: 12px/1.8 'SFMono-Regular', Consolas, monospace; }
 #abc-editor::selection { background: #43675b; }
 .validation { min-height: 35px; padding: 7px 18px; border-top: 1px solid #39504b; color: #e8c982; font-size: 10px; }
 .validation-message + .validation-message { margin-top: 4px; }
@@ -109,7 +109,7 @@ button { color: inherit; }
   .code-panel { min-height: 460px; }
   .code-heading { min-height: 72px; padding-inline: 16px; }
   .editor-wrap { min-height: 330px; }
-  #abc-editor { min-width: 300px; }
+  #abc-editor { min-width: 0; }
 }
 
 @media (max-width: 420px) {

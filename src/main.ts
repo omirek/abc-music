@@ -87,7 +87,7 @@ app.innerHTML = `
           <div class="code-title"><span class="file-mark">ABC</span><div><span class="eyebrow">ŹRÓDŁO</span><h2>Partytura.abc</h2></div></div>
           <span class="code-language">ABC NOTATION</span>
         </div>
-        <div class="editor-wrap"><div class="line-numbers" id="line-numbers" aria-hidden="true"></div><textarea id="abc-editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Edytor tekstu ABC"></textarea></div>
+        <div class="editor-wrap"><div class="line-numbers" id="line-numbers" aria-hidden="true"></div><textarea id="abc-editor" wrap="soft" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Edytor tekstu ABC"></textarea></div>
         <div class="validation" id="validation" role="status" aria-live="polite"></div>
         <div class="editor-footer"><span id="line-count">0 linii</span><span>ABC · UTF-8</span></div>
       </section>
@@ -179,8 +179,42 @@ function updateMetadata(): void {
 }
 
 function updateLineNumbers(): void {
+  const lineNumbers = document.querySelector<HTMLDivElement>('#line-numbers')!;
   const lineCount = code.split('\n').length;
-  document.querySelector('#line-numbers')!.textContent = Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n');
+  const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight);
+  const mirror = document.createElement('div');
+  const editorStyle = getComputedStyle(editor);
+  Object.assign(mirror.style, {
+    position: 'fixed',
+    left: '-10000px',
+    top: '0',
+    boxSizing: 'border-box',
+    width: `${editor.clientWidth}px`,
+    padding: editorStyle.padding,
+    font: editorStyle.font,
+    lineHeight: editorStyle.lineHeight,
+    letterSpacing: editorStyle.letterSpacing,
+    tabSize: editorStyle.tabSize,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    wordBreak: editorStyle.wordBreak,
+    visibility: 'hidden',
+  });
+  document.body.append(mirror);
+  const visualLineNumbers = code.split('\n').flatMap((line, index) => {
+    const lineElement = document.createElement('div');
+    lineElement.style.minHeight = `${lineHeight}px`;
+    const textNode = document.createTextNode(line || '\u200b');
+    lineElement.append(textNode);
+    mirror.append(lineElement);
+    const range = document.createRange();
+    range.selectNodeContents(lineElement);
+    const wrappedLines = Math.max(1, range.getClientRects().length);
+    return [String(index + 1), ...Array.from({ length: wrappedLines - 1 }, () => '')];
+  });
+  mirror.remove();
+  lineNumbers.textContent = visualLineNumbers.join('\n');
+  lineNumbers.scrollTop = editor.scrollTop;
   document.querySelector('#line-count')!.textContent = `${lineCount} ${lineCount === 1 ? 'linia' : 'linii'}`;
 }
 
@@ -191,6 +225,7 @@ function updateCode(nextCode: string, record = true, selection: SourceRange[] = 
   selectedRanges = selection;
   stopPlayback();
   renderScore();
+  selectEditorRanges(selection);
   document.querySelector('#save-state')!.textContent = 'Gotowe do edycji';
 }
 
@@ -285,6 +320,31 @@ function setSelectedRanges(ranges: SourceRange[]): void {
   selectedRanges = [...new Map(ranges.map((range) => [`${range.start}:${range.end}`, range])).values()]
     .sort((left, right) => left.start - right.start);
   applySelectionStyles();
+}
+
+function selectEditorRanges(ranges: SourceRange[]): void {
+  if (ranges.length === 0) return;
+  const first = ranges[0];
+  const last = ranges[ranges.length - 1];
+  editor.focus();
+  editor.setSelectionRange(first.start, last.end);
+}
+
+function syncScoreSelectionFromEditor(): void {
+  if (document.activeElement !== editor) return;
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const ranges = start === end
+    ? []
+    : (visualObjects[0]?.getSelectableArray() ?? [])
+      .map((selectable) => getSelectableRange(selectable))
+      .filter((range): range is SourceRange => range !== null && range.start < end && range.end > start);
+  setSelectedRanges(ranges);
+  if (ranges.length > 0) {
+    document.querySelector('#selection-status')!.textContent = `Zaznaczono ${ranges.length} ${ranges.length === 1 ? 'element' : ranges.length < 5 ? 'elementy' : 'elementów'}`;
+  } else {
+    document.querySelector('#selection-status')!.textContent = 'Gotowe do edycji';
+  }
 }
 
 function applySelectionStyles(): void {
@@ -419,6 +479,7 @@ function onScorePointerUp(event: PointerEvent): void {
       .map((selectable) => getSelectableRange(selectable))
       .filter((range): range is SourceRange => range !== null);
     setSelectedRanges(ranges);
+    selectEditorRanges(ranges);
     document.querySelector('#selection-status')!.textContent = ranges.length
       ? `Zaznaczono ${ranges.length} ${ranges.length === 1 ? 'element' : ranges.length < 5 ? 'elementy' : 'elementów'}`
       : 'Nie zaznaczono elementów';
@@ -735,10 +796,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => 
 });
 
 editor.addEventListener('input', scheduleRender);
+editor.addEventListener('select', syncScoreSelectionFromEditor);
 editor.addEventListener('pointerdown', () => setSelectedRanges([]));
 editor.addEventListener('scroll', () => {
   document.querySelector<HTMLDivElement>('#line-numbers')!.scrollTop = editor.scrollTop;
 });
+document.addEventListener('selectionchange', syncScoreSelectionFromEditor);
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
@@ -784,8 +847,10 @@ document.addEventListener('keydown', (event) => {
 function installResizeObserver(): void {
   const observer = new ResizeObserver(() => {
     score.querySelectorAll<SVGSVGElement>('svg').forEach((svg) => svg.setAttribute('preserveAspectRatio', 'xMinYMin meet'));
+    updateLineNumbers();
   });
   observer.observe(scoreScroll);
+  observer.observe(editor);
 }
 
 installResizeObserver();
