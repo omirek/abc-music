@@ -29,7 +29,8 @@ poleceniem `npm run build:pages`.
 - Wybierz narzędzie nuty lub pauzy i kliknij zapis, aby dodać element. Ustaw
 	wartość rytmiczną, oktawę i znak chromatyczny na pasku narzędzi.
 - W trybie zaznaczania przeciągnij nutę w pionie, aby zmienić jej wysokość.
-	Zaznaczone elementy można usunąć przyciskiem „Usuń zaznaczenie”.
+	Zaznaczone nuty można przesuwać strzałkami w górę i w dół, a klawiszem
+	Delete albo przyciskiem „Usuń zaznaczenie” usuwać zaznaczenie.
 - Przeciągnij ramkę po pustym miejscu partytury, aby zaznaczyć wiele nut.
 	Zaznaczone nuty można usuwać razem, przesuwać w pionie lub przenosić poziomo
 	w obrębie jednego głosu; poziome przesunięcie zachowuje wartości rytmiczne.

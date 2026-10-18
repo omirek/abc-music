@@ -663,6 +663,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => 
 });
 
 editor.addEventListener('input', scheduleRender);
+editor.addEventListener('pointerdown', () => setSelectedRanges([]));
 editor.addEventListener('scroll', () => {
   document.querySelector<HTMLDivElement>('#line-numbers')!.scrollTop = editor.scrollTop;
 });
@@ -676,6 +677,24 @@ fileInput.addEventListener('change', async () => {
 });
 
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Delete' && selectedRanges.length) {
+    event.preventDefault();
+    deleteSelection();
+    return;
+  }
+  const target = event.target;
+  if (selectedRanges.length && !event.altKey && !event.ctrlKey && !event.metaKey
+    && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    && !(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement)) {
+    event.preventDefault();
+    const steps = event.key === 'ArrowUp' ? -1 : 1;
+    const edit = transformNoteRanges(code, selectedRanges, steps);
+    if (edit.code !== code) {
+      updateCode(edit.code, true, edit.ranges);
+      document.querySelector('#selection-status')!.textContent = 'Zaznaczenie transponowane';
+    }
+    return;
+  }
   if (!(event.ctrlKey || event.metaKey)) return;
   const key = event.key.toLowerCase();
   if (key === 'z' && event.shiftKey) {
