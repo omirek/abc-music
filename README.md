@@ -16,6 +16,13 @@ npm run dev
 Otwórz adres pokazany przez Vite. Aplikację można zbudować do `dist/` poleceniem
 `npm run build` i serwować statycznie.
 
+## Publikowanie na GitHub Pages
+
+Workflow z gałęzi `main` buduje aplikację i publikuje ją na GitHub Pages.
+W ustawieniach repozytorium otwórz **Settings → Pages** i ustaw źródło
+publikacji na **GitHub Actions**. Lokalny podgląd Pages można zbudować
+poleceniem `npm run build:pages`.
+
 ## Edycja
 
 - Otwieraj pliki `.abc`, edytuj tekst i eksportuj wynik do nowego pliku.
