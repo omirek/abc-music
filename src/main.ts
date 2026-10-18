@@ -103,6 +103,7 @@ const validation = document.querySelector<HTMLDivElement>('#validation')!;
 const durationControl = document.querySelector<HTMLSelectElement>('#duration')!;
 const octaveControl = document.querySelector<HTMLSelectElement>('#octave')!;
 const accidentalControl = document.querySelector<HTMLSelectElement>('#accidental')!;
+const ABCJS_PITCH_STEP = 30 * 93 / 720;
 let history = new History(STARTER_ABC);
 let code = STARTER_ABC;
 let tool: Tool = 'select';
@@ -117,7 +118,7 @@ let scoreGesture: ScoreGesture | null = null;
 
 type ScoreGesture =
   | { kind: 'box'; pointerId: number; startX: number; startY: number; moved: boolean; box: HTMLDivElement }
-  | { kind: 'notes'; pointerId: number; startX: number; startY: number; moved: boolean; selectable: ABCJS.Selectable; ranges: SourceRange[] };
+  | { kind: 'notes'; pointerId: number; startX: number; startY: number; moved: boolean; axis: 'horizontal' | 'vertical' | null; selectable: ABCJS.Selectable; ranges: SourceRange[] };
 
 editor.value = code;
 score.addEventListener('click', onEmptyScoreClick);
@@ -315,6 +316,7 @@ function onScorePointerDown(event: PointerEvent): void {
       startX: event.clientX,
       startY: event.clientY,
       moved: false,
+      axis: null,
       selectable,
       ranges,
     };
@@ -355,6 +357,7 @@ function onScorePointerMove(event: PointerEvent): void {
   const deltaX = event.clientX - gesture.startX;
   const deltaY = event.clientY - gesture.startY;
   if (Math.hypot(deltaX, deltaY) > 5) gesture.moved = true;
+  if (gesture.kind === 'notes') lockNoteDragAxis(gesture, deltaX, deltaY);
   if (gesture.kind === 'box') {
     const left = Math.min(gesture.startX, event.clientX);
     const top = Math.min(gesture.startY, event.clientY);
@@ -375,7 +378,9 @@ function onScorePointerMove(event: PointerEvent): void {
       const scaleY = svg?.viewBox.baseVal.height && svg.clientHeight
         ? svg.viewBox.baseVal.height / svg.clientHeight
         : 1;
-      selectable.svgEl.setAttribute('transform', `translate(${deltaX * scaleX},${deltaY * scaleY})`);
+      const moveX = gesture.axis === 'horizontal' ? deltaX * scaleX : 0;
+      const moveY = gesture.axis === 'horizontal' ? 0 : deltaY * scaleY;
+      selectable.svgEl.setAttribute('transform', `translate(${moveX},${moveY})`);
     }
     event.preventDefault();
     event.stopPropagation();
@@ -422,6 +427,7 @@ function onScorePointerUp(event: PointerEvent): void {
 
   const deltaX = event.clientX - gesture.startX;
   const deltaY = event.clientY - gesture.startY;
+  lockNoteDragAxis(gesture, deltaX, deltaY);
   clearDraggedNoteTransforms(gesture.ranges);
   if (!gesture.moved) {
     if (gesture.ranges.length > 1) {
@@ -436,7 +442,7 @@ function onScorePointerUp(event: PointerEvent): void {
     return;
   }
 
-  if (gesture.ranges.length > 1 && Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY)) {
+  if (gesture.axis === 'horizontal') {
     const insertion = findDropInsertion(event.clientX, event.clientY, gesture.selectable, gesture.ranges);
     if (!insertion) {
       document.querySelector('#selection-status')!.textContent = 'Nie można przenieść zaznaczenia w to miejsce';
@@ -452,8 +458,8 @@ function onScorePointerUp(event: PointerEvent): void {
     return;
   }
 
-  const svg = gesture.selectable.svgEl.closest('svg');
-  const stepHeight = svg ? getStaffStepHeight(svg, gesture.startY) : null;
+  const svg = gesture.selectable.svgEl.ownerSVGElement;
+  const stepHeight = svg ? getStaffStepHeight(svg) : null;
   const steps = stepHeight ? Math.round(deltaY / stepHeight) : 0;
   if (steps !== 0) {
     const edit = transformNoteRanges(code, gesture.ranges, steps);
@@ -461,6 +467,21 @@ function onScorePointerUp(event: PointerEvent): void {
       updateCode(edit.code, true, edit.ranges);
       document.querySelector('#selection-status')!.textContent = 'Zaznaczenie transponowane';
     }
+  }
+}
+
+function lockNoteDragAxis(
+  gesture: Extract<ScoreGesture, { kind: 'notes' }>,
+  deltaX: number,
+  deltaY: number,
+): void {
+  if (Math.abs(deltaX) >= 24 && Math.abs(deltaX) > Math.abs(deltaY)) {
+    gesture.axis = 'horizontal';
+    return;
+  }
+  if (gesture.axis !== null) return;
+  if (Math.abs(deltaY) > 5 && Math.abs(deltaY) >= Math.abs(deltaX)) {
+    gesture.axis = 'vertical';
   }
 }
 
@@ -520,27 +541,10 @@ function findDropInsertion(
   };
 }
 
-function getStaffStepHeight(svg: SVGSVGElement, clientY: number): number | null {
-  const lineYs = [...svg.querySelectorAll<SVGGraphicsElement>('.abcjs-staff path')]
-    .map((line) => {
-      const rect = line.getBoundingClientRect();
-      return rect.top + rect.height / 2;
-    })
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  const groups: number[][] = [];
-  for (const y of lineYs) {
-    const current = groups[groups.length - 1];
-    if (!current || y - current[current.length - 1] > 22) groups.push([y]);
-    else current.push(y);
-  }
-  const lines = groups
-    .filter((group) => group.length >= 5)
-    .map((group) => group.slice(0, 5))
-    .sort((left, right) => Math.abs(clientY - (left[0] + left[4]) / 2) - Math.abs(clientY - (right[0] + right[4]) / 2))[0];
-  if (!lines) return null;
-  const stepHeight = (lines[4] - lines[0]) / 8;
-  return stepHeight > 0 ? stepHeight : null;
+function getStaffStepHeight(svg: SVGSVGElement): number | null {
+  const screenScale = svg.getScreenCTM()?.d;
+  if (screenScale === undefined || !Number.isFinite(screenScale) || screenScale === 0) return null;
+  return ABCJS_PITCH_STEP * Math.abs(screenScale);
 }
 
 function selectedOctave(staffOctave: number): number {
