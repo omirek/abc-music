@@ -25,6 +25,53 @@ export interface SourceRange {
   end: number;
 }
 
+export function normalizeLineEndings(source: string): string {
+  return source.replace(/\r\n?/g, '\n');
+}
+
+export interface SourceRangeDeletion {
+  code: string;
+  skipped: number;
+}
+
+export function removeSourceRanges(source: string, ranges: SourceRange[]): SourceRangeDeletion {
+  const fields = [...source.matchAll(/^[A-Za-z]:[^\n]*|^%%[^\n]*/gm)]
+    .map((match) => {
+      const start = match.index ?? 0;
+      const previousLineBreak = source[start - 1] === '\n'
+        ? start > 1 && source[start - 2] === '\r' ? start - 2 : start - 1
+        : start;
+      return { start: previousLineBreak, end: start + match[0].length };
+    });
+  let skipped = 0;
+  const safeRanges = ranges.filter(({ start, end }) => {
+    const valid = Number.isInteger(start) && Number.isInteger(end)
+      && start >= 0 && end > start && end <= source.length;
+    const overlapsField = valid && fields.some((field) => start < field.end && end > field.start);
+    if (!valid || overlapsField) skipped += 1;
+    return valid && !overlapsField;
+  });
+  const ordered = safeRanges
+    .sort((left, right) => left.start - right.start);
+  const merged: SourceRange[] = [];
+  for (const range of ordered) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+
+  let result = '';
+  let position = 0;
+  for (const range of merged) {
+    result += source.slice(position, range.start);
+    position = range.end;
+  }
+  return { code: result + source.slice(position), skipped };
+}
+
 export interface NoteRangeEdit {
   code: string;
   ranges: SourceRange[];

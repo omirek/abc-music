@@ -27,7 +27,8 @@ poleceniem `npm run build:pages`.
 
 - Otwieraj pliki `.abc`, edytuj tekst (z zawijaniem długich wierszy) i
   eksportuj wynik do nowego pliku. Zaznaczenia nut są synchronizowane między
-  zapisem graficznym i edytorem ABC.
+  zapisem graficznym i edytorem ABC. Końce wierszy są normalizowane do LF,
+  aby indeksy nut były zgodne między parserem i edytorem.
 - Wybierz narzędzie nuty lub pauzy i kliknij zapis, aby dodać element. Ustaw
 	wartość rytmiczną, oktawę i znak chromatyczny na pasku narzędzi.
 - W trybie zaznaczania przeciągnij nutę w pionie, aby zmienić jej wysokość.

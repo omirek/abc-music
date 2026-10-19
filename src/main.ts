@@ -1,5 +1,5 @@
 import * as ABCJS from 'abcjs';
-import { findNoteShape, inspectABC, makeNoteToken, noteLengthSuffix, STARTER_ABC, transformNoteRanges, tuneInsertionPoint } from './abc-source';
+import { findNoteShape, inspectABC, makeNoteToken, normalizeLineEndings, noteLengthSuffix, removeSourceRanges, STARTER_ABC, transformNoteRanges, tuneInsertionPoint } from './abc-source';
 import type { SourceRange } from './abc-source';
 import { History } from './history';
 import './styles.css';
@@ -219,7 +219,7 @@ function updateLineNumbers(): void {
 }
 
 function updateCode(nextCode: string, record = true, selection: SourceRange[] = []): void {
-  code = nextCode;
+  code = normalizeLineEndings(nextCode);
   editor.value = code;
   if (record) history.push(code);
   selectedRanges = selection;
@@ -326,7 +326,6 @@ function selectEditorRanges(ranges: SourceRange[]): void {
   if (ranges.length === 0) return;
   const first = ranges[0];
   const last = ranges[ranges.length - 1];
-  editor.focus();
   editor.setSelectionRange(first.start, last.end);
 }
 
@@ -334,6 +333,9 @@ function syncScoreSelectionFromEditor(): void {
   if (document.activeElement !== editor) return;
   const start = editor.selectionStart;
   const end = editor.selectionEnd;
+  if (selectedRanges.length > 1
+    && start === selectedRanges[0].start
+    && end === selectedRanges[selectedRanges.length - 1].end) return;
   const ranges = start === end
     ? []
     : (visualObjects[0]?.getSelectableArray() ?? [])
@@ -690,11 +692,11 @@ function deleteSelection(): void {
     document.querySelector('#selection-status')!.textContent = 'Zaznacz nutę lub fragment kodu';
     return;
   }
-  const nextCode = [...ranges]
-    .sort((left, right) => right.start - left.start)
-    .reduce((current, range) => current.slice(0, range.start) + current.slice(range.end), code);
-  updateCode(nextCode);
-  document.querySelector('#selection-status')!.textContent = 'Zaznaczenie usunięte';
+  const deletion = removeSourceRanges(code, ranges);
+  if (deletion.code !== code) updateCode(deletion.code);
+  document.querySelector('#selection-status')!.textContent = deletion.skipped
+    ? `Pominięto ${deletion.skipped} zakresów obejmujących nagłówek lub podział wiersza ABC`
+    : deletion.code === code ? 'Nie znaleziono poprawnych zakresów do usunięcia' : 'Zaznaczenie usunięte';
 }
 
 function exportABC(): void {
@@ -805,7 +807,7 @@ document.addEventListener('selectionchange', syncScoreSelectionFromEditor);
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
-  const imported = await file.text();
+  const imported = normalizeLineEndings(await file.text());
   history = new History(imported);
   updateCode(imported, false);
   fileInput.value = '';
