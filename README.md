@@ -31,9 +31,13 @@ poleceniem `npm run build:pages`.
   aby indeksy nut były zgodne między parserem i edytorem.
 - Wybierz narzędzie nuty lub pauzy i kliknij zapis, aby dodać element. Ustaw
 	wartość rytmiczną, oktawę i znak chromatyczny na pasku narzędzi.
-- W trybie zaznaczania przeciągnij nutę w pionie, aby zmienić jej wysokość.
-	Zaznaczone nuty można przesuwać strzałkami w górę i w dół, a klawiszem
-	Delete albo przyciskiem „Usuń zaznaczenie” usuwać zaznaczenie.
+- W trybie zaznaczania kliknij nutę, aby odsłuchać jej dźwięk; przy kliknięciu
+	nuty należącej do wielokrotnego zaznaczenia odtworzy się ono jako akord.
+	Przycisk „Odtwórz” rozpoczyna odtwarzanie od pierwszej zaznaczonej nuty
+	albo od początku utworu, jeśli nic nie zaznaczono.
+	Przeciągnij nutę w pionie, aby zmienić jej wysokość. Zaznaczone nuty można
+	przesuwać strzałkami w górę i w dół, a klawiszem Delete albo przyciskiem
+	„Usuń zaznaczenie” usuwać zaznaczenie.
 - Przeciągnij ramkę po pustym miejscu partytury, aby zaznaczyć wiele nut.
 	Zaznaczone nuty można usuwać razem, przesuwać w pionie lub przenosić poziomo
 	w obrębie jednego głosu; poziome przesunięcie zachowuje wartości rytmiczne.

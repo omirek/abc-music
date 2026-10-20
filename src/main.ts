@@ -61,7 +61,7 @@ app.innerHTML = `
       </label>
       <div class="toolbar-spacer"></div>
       <button class="icon-button delete-button" data-action="delete" title="Usuń zaznaczenie" aria-label="Usuń zaznaczenie">⌫</button>
-      <button class="play-button" data-action="play" title="Odtwórz melodię"><span class="play-icon" aria-hidden="true">▶</span><span id="play-label">Odtwórz</span></button>
+      <button class="play-button" data-action="play" title="Odtwórz od początku lub od zaznaczonej nuty"><span class="play-icon" aria-hidden="true">▶</span><span id="play-label">Odtwórz</span></button>
     </section>
 
     <div class="workbench">
@@ -78,7 +78,7 @@ app.innerHTML = `
         </div>
         <div class="score-footer">
           <span class="selection-status" id="selection-status">Gotowe do edycji</span>
-          <span class="score-hint" id="score-hint">Wybierz narzędzie, aby edytować zapis</span>
+          <span class="score-hint" id="score-hint">Kliknij nutę, aby odsłuchać; ▶ odtwarza od zaznaczonej nuty; przeciągnij ją, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką</span>
         </div>
       </section>
 
@@ -251,7 +251,7 @@ function changeTool(nextTool: Tool): void {
     button.classList.toggle('active', button.dataset.tool === tool);
   });
   const hints: Record<Tool, string> = {
-    select: 'Przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
+    select: 'Kliknij nutę, aby odsłuchać; ▶ odtwarza od zaznaczonej nuty; przeciągnij ją, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
     note: 'Kliknij partyturę, aby wstawić nutę',
     rest: 'Kliknij partyturę, aby wstawić pauzę',
   };
@@ -493,6 +493,7 @@ function onScorePointerUp(event: PointerEvent): void {
   lockNoteDragAxis(gesture, deltaX, deltaY);
   clearDraggedNoteTransforms(gesture.ranges);
   if (!gesture.moved) {
+    void previewSelectedNotes(gesture.ranges);
     if (gesture.ranges.length > 1) {
       document.querySelector('#selection-status')!.textContent = `Zaznaczono ${gesture.ranges.length} elementów`;
       return;
@@ -509,14 +510,17 @@ function onScorePointerUp(event: PointerEvent): void {
     const insertion = findDropInsertion(event.clientX, event.clientY, gesture.selectable, gesture.ranges);
     if (!insertion) {
       document.querySelector('#selection-status')!.textContent = 'Nie można przenieść zaznaczenia w to miejsce';
+      void previewDroppedNote(gesture.ranges);
       return;
     }
     const edit = transformNoteRanges(code, gesture.ranges, 0, insertion);
     if (edit.code !== code) {
       updateCode(edit.code, true, edit.ranges);
       document.querySelector('#selection-status')!.textContent = 'Zaznaczenie przeniesione';
+      void previewDroppedNote(edit.ranges);
     } else {
       document.querySelector('#selection-status')!.textContent = 'Nie można przenieść zaznaczenia w to miejsce';
+      void previewDroppedNote(gesture.ranges);
     }
     return;
   }
@@ -529,8 +533,15 @@ function onScorePointerUp(event: PointerEvent): void {
     if (edit.code !== code) {
       updateCode(edit.code, true, edit.ranges);
       document.querySelector('#selection-status')!.textContent = 'Zaznaczenie transponowane';
+      void previewDroppedNote(edit.ranges);
+      return;
     }
   }
+  void previewDroppedNote(gesture.ranges);
+}
+
+function previewDroppedNote(ranges: SourceRange[]): Promise<void> {
+  return ranges.length === 1 ? previewSelectedNotes(ranges) : Promise.resolve();
 }
 
 function lockNoteDragAxis(
@@ -721,6 +732,38 @@ function stopPlayback(): void {
   document.querySelector('.play-icon')!.textContent = '▶';
 }
 
+async function previewSelectedNotes(ranges: SourceRange[]): Promise<void> {
+  const tune = visualObjects[0];
+  if (!tune) return;
+  const AudioContextConstructor = window.AudioContext;
+  if (!AudioContextConstructor) {
+    document.querySelector('#selection-status')!.textContent = 'Ta przeglądarka nie obsługuje Web Audio';
+    return;
+  }
+  if (playback) stopPlayback();
+
+  audioContext ??= new AudioContextConstructor();
+  const context = audioContext;
+  try {
+    await context.resume();
+  } catch (error) {
+    document.querySelector('#selection-status')!.textContent = error instanceof Error
+      ? `Nie można odtworzyć dźwięku: ${error.message}`
+      : 'Nie można odtworzyć dźwięku';
+    return;
+  }
+
+  const selected = ranges;
+  const pitches = tune.setUpAudio({}).tracks.flat()
+    .filter((item): item is ABCJS.AudioTrackNoteItem => item.cmd === 'note'
+      && selected.some((range) => item.startChar === range.start && item.endChar === range.end));
+  if (pitches.length === 0) {
+    document.querySelector('#selection-status')!.textContent = 'Nie znaleziono dźwięku dla zaznaczonej nuty';
+    return;
+  }
+  for (const pitch of pitches) playTone(context, pitch.pitch, 0.35);
+}
+
 async function togglePlayback(): Promise<void> {
   if (playback) {
     stopPlayback();
@@ -736,6 +779,7 @@ async function togglePlayback(): Promise<void> {
     document.querySelector('#selection-status')!.textContent = 'Ta przeglądarka nie obsługuje Web Audio';
     return;
   }
+  if (audioContext && audioContext.state !== 'closed') void audioContext.close();
   audioContext = new AudioContextConstructor();
   await audioContext.resume();
   const context = audioContext;
@@ -759,7 +803,15 @@ async function togglePlayback(): Promise<void> {
     },
   });
   playback = timer;
-  timer.start();
+  const selection = selectedRanges;
+  const selectedEvent = timer.noteTimings.find((event) => event.type === 'event'
+    && selection.some((range) => {
+      const starts = event.startCharArray ?? (event.startChar === undefined ? [] : [event.startChar]);
+      const ends = event.endCharArray ?? (event.endChar === undefined ? [] : [event.endChar]);
+      return starts.some((start, index) => start === range.start
+        || (ends[index] !== undefined && start < range.end && ends[index] > range.start));
+    }));
+  timer.start(selectedEvent ? selectedEvent.milliseconds / 1000 : 0, 'seconds');
   document.querySelector('#play-label')!.textContent = 'Zatrzymaj';
   document.querySelector('.play-icon')!.textContent = '■';
 }
