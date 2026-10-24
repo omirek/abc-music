@@ -41,8 +41,13 @@ poleceniem `npm run build:pages`.
 	zmiana listy edytuje zaznaczone nuty. Zaznacz dwie sąsiadujące nuty o tej
 	samej wysokości w jednym głosie i wybierz „Połącz”, aby zastąpić je jedną
 	nutą o łącznej wartości.
+	Zaznacz kolejne nuty w jednym głosie i wybierz „Łuk frazowy”, aby dodać
+	oznaczenie frazy; „Łuk łączący” łączy dwie kolejne nuty o tej samej
+	wysokości bez ponownego atakowania dźwięku. Zaznacz nuty objęte łukiem i
+	użyj „Usuń łuk”, aby go usunąć.
 	Przeciągnij nutę w pionie, aby zmienić jej wysokość. Zaznaczone nuty można
-	przesuwać strzałkami w górę i w dół, a klawiszem Delete albo przyciskiem
+	przesuwać strzałkami w górę i w dół; strzałkami w lewo i w prawo przechodzić
+	do poprzedniej lub następnej nuty. Klawiszem Delete albo przyciskiem
 	„Usuń zaznaczenie” usuwać zaznaczenie.
 - Przeciągnij ramkę po pustym miejscu partytury, aby zaznaczyć wiele nut.
 	Zaznaczone nuty można usuwać razem, przesuwać w pionie lub przenosić poziomo

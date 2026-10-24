@@ -1,6 +1,6 @@
 import * as ABCJS from 'abcjs';
 import { findNoteShape, inspectABC, makeNoteToken, normalizeLineEndings, noteLengthSuffix, removeSourceRanges, STARTER_ABC, transformNoteRanges, tuneInsertionPoint } from './abc-source';
-import type { SourceRange } from './abc-source';
+import type { NoteShape, SourceRange } from './abc-source';
 import { History } from './history';
 import './styles.css';
 
@@ -60,6 +60,9 @@ app.innerHTML = `
         </select>
       </label>
       <div class="toolbar-spacer"></div>
+      <button class="button button-quiet" data-action="remove-arc" title="Usuń łuk z zaznaczonych nut" aria-label="Usuń łuk" disabled>Usuń łuk</button>
+      <button class="button button-quiet" data-action="tie" title="Dodaj łuk łączący do dwóch kolejnych nut tej samej wysokości" aria-label="Dodaj łuk łączący" disabled>Łuk łączący</button>
+      <button class="button button-quiet" data-action="slur" title="Dodaj łuk frazowy do kolejnych nut" aria-label="Dodaj łuk frazowy" disabled>Łuk frazowy</button>
       <button class="button button-quiet merge-button" data-action="merge" title="Połącz dwie sąsiadujące nuty o tej samej wysokości" aria-label="Połącz zaznaczone nuty" disabled>Połącz</button>
       <button class="icon-button delete-button" data-action="delete" title="Usuń zaznaczenie" aria-label="Usuń zaznaczenie">⌫</button>
       <button class="play-button" data-action="play" title="Odtwórz od początku lub od zaznaczonej nuty"><span class="play-icon" aria-hidden="true">▶</span><span id="play-label">Odtwórz</span></button>
@@ -79,7 +82,7 @@ app.innerHTML = `
         </div>
         <div class="score-footer">
           <span class="selection-status" id="selection-status">Gotowe do edycji</span>
-          <span class="score-hint" id="score-hint">Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką</span>
+          <span class="score-hint" id="score-hint">Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; strzałki lewo/prawo zmieniają nutę; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką</span>
         </div>
       </section>
 
@@ -106,6 +109,9 @@ const octaveControl = document.querySelector<HTMLSelectElement>('#octave')!;
 const accidentalControl = document.querySelector<HTMLSelectElement>('#accidental')!;
 const selectionStatus = document.querySelector<HTMLSpanElement>('#selection-status')!;
 const mergeButton = document.querySelector<HTMLButtonElement>('[data-action="merge"]')!;
+const tieButton = document.querySelector<HTMLButtonElement>('[data-action="tie"]')!;
+const slurButton = document.querySelector<HTMLButtonElement>('[data-action="slur"]')!;
+const removeArcButton = document.querySelector<HTMLButtonElement>('[data-action="remove-arc"]')!;
 const ABCJS_PITCH_STEP = 30 * 93 / 720;
 let history = new History(STARTER_ABC);
 let code = STARTER_ABC;
@@ -255,7 +261,7 @@ function changeTool(nextTool: Tool): void {
     button.classList.toggle('active', button.dataset.tool === tool);
   });
   const hints: Record<Tool, string> = {
-    select: 'Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
+    select: 'Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; strzałki lewo/prawo zmieniają nutę; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
     note: 'Kliknij partyturę, aby wstawić nutę',
     rest: 'Kliknij partyturę, aby wstawić pauzę',
   };
@@ -334,6 +340,9 @@ function refreshSelectionControls(): void {
     .map((range) => findNoteShape(code.slice(range.start, range.end)))
     .filter((shape): shape is NonNullable<typeof shape> => shape !== null);
   mergeButton.disabled = !canMergeSelectedNotes();
+  tieButton.disabled = !canAddTie();
+  slurButton.disabled = !canAddSlur();
+  removeArcButton.disabled = !findSelectedArcMarkers().length;
   if (notes.length === 1 && selectedRanges.length === 1) {
     const duration = noteDuration(code, notes[0].length);
     const matchingOption = [...durationControl.options].find((option) =>
@@ -349,6 +358,7 @@ function refreshSelectionControls(): void {
       durationControl.append(option);
       durationControl.value = option.value;
     }
+
     setAccidentalControl(notes[0].accidental);
     return;
   }
@@ -376,6 +386,187 @@ function refreshSelectionControls(): void {
   }
   if (durationControl.value === 'mixed') durationControl.value = '0.25';
   if (accidentalControl.value === 'mixed') accidentalControl.value = '';
+}
+
+interface SelectedScoreNote {
+  range: SourceRange;
+  selectable: ABCJS.Selectable;
+  shape: NoteShape;
+}
+
+function getContiguousSelectedNotes(): SelectedScoreNote[] | null {
+  if (selectedRanges.length < 2) return null;
+  const notes: SelectedScoreNote[] = [];
+  for (const range of selectedRanges) {
+    const selectable = (visualObjects[0]?.getSelectableArray() ?? []).find((item) => {
+      const itemRange = getSelectableRange(item);
+      return itemRange?.start === range.start && itemRange.end === range.end;
+    });
+    const shape = findNoteShape(code.slice(range.start, range.end));
+    if (!selectable || !shape || selectable.absEl.abcelem.pitches?.length !== 1
+      || selectable.absEl.abcelem.rest) return null;
+    notes.push({ range, selectable, shape });
+  }
+  const voice = getSelectableVoice(notes[0].selectable);
+  if (voice === null || notes.some((note) => getSelectableVoice(note.selectable) !== voice)) return null;
+  const voiceNotes = (visualObjects[0]?.getSelectableArray() ?? [])
+    .filter((item) => getSelectableVoice(item) === voice && getSelectableRange(item))
+    .sort((left, right) => (getSelectableRange(left)?.start ?? 0) - (getSelectableRange(right)?.start ?? 0));
+  const selectedIndexes = notes.map((note) => voiceNotes.findIndex((item) => {
+    const range = getSelectableRange(item);
+    return range?.start === note.range.start && range.end === note.range.end;
+  })).sort((left, right) => left - right);
+  if (selectedIndexes.some((index) => index < 0)
+    || selectedIndexes.some((index, offset) => offset > 0 && index !== selectedIndexes[offset - 1] + 1)) return null;
+  return notes.sort((left, right) => left.range.start - right.range.start);
+}
+
+function getNoteMidiPitch(range: SourceRange): number | null {
+  const tune = visualObjects[0];
+  if (!tune) return null;
+  const note = tune.setUpAudio({}).tracks.flat().find((item): item is ABCJS.AudioTrackNoteItem =>
+    item.cmd === 'note' && item.startChar === range.start && item.endChar === range.end);
+  return note?.pitch ?? null;
+}
+
+function canAddTie(): boolean {
+  const notes = getContiguousSelectedNotes();
+  if (!notes || notes.length !== 2) return false;
+  const [first, second] = notes;
+  const firstPitch = getNoteMidiPitch(first.range);
+  const secondPitch = getNoteMidiPitch(second.range);
+  if (firstPitch === null || firstPitch !== secondPitch) return false;
+  return findTieMarker(notes) === null;
+}
+
+function canAddSlur(): boolean {
+  const notes = getContiguousSelectedNotes();
+  return notes !== null && findSlurMarkers(notes).length === 0;
+}
+
+function findTieMarker(notes: SelectedScoreNote[]): number | null {
+  if (notes.length !== 2) return null;
+  const firstTokenEnd = notes[0].range.start + notes[0].shape.matchEnd;
+  const gap = code.slice(firstTokenEnd, notes[1].range.start);
+  const marker = gap.indexOf('-');
+  return marker < 0 ? null : firstTokenEnd + marker;
+}
+
+function findSlurMarkers(notes: SelectedScoreNote[]): number[] {
+  if (notes.length < 2) return [];
+  const firstTokenStart = notes[0].range.start + notes[0].shape.matchStart;
+  const lastTokenEnd = notes[notes.length - 1].range.start + notes[notes.length - 1].shape.matchEnd;
+  const markers: number[] = [];
+  if (code[firstTokenStart - 1] === '(') markers.push(firstTokenStart - 1);
+  if (code[lastTokenEnd] === ')') markers.push(lastTokenEnd);
+  return markers.length === 2 ? markers : [];
+}
+
+function findSelectedArcMarkers(): number[] {
+  const notes = getContiguousSelectedNotes();
+  if (!notes) return [];
+  const tieMarker = findTieMarker(notes);
+  const slurMarkers = findSlurMarkers(notes);
+  return [...(tieMarker === null ? [] : [tieMarker]), ...slurMarkers];
+}
+
+function insertNotationMarkers(markers: Array<{ position: number; text: string }>): void {
+  let nextCode = code;
+  for (const marker of [...markers].sort((left, right) => right.position - left.position)) {
+    nextCode = nextCode.slice(0, marker.position) + marker.text + nextCode.slice(marker.position);
+  }
+  const ranges = selectedRanges.map((range) => {
+    let start = range.start;
+    let end = range.end;
+    for (const marker of markers) {
+      if (marker.position <= start) {
+        start += marker.text.length;
+        end += marker.text.length;
+      } else if (marker.position < end) {
+        end += marker.text.length;
+      }
+    }
+    return { start, end };
+  });
+  updateCode(nextCode, true, ranges);
+}
+
+function addTie(): void {
+  if (!canAddTie()) {
+    selectionStatus.textContent = 'Wybierz dwie kolejne nuty tej samej wysokości w jednym głosie';
+    return;
+  }
+  const notes = getContiguousSelectedNotes();
+  if (!notes) return;
+  const first = notes[0];
+  insertNotationMarkers([{ position: first.range.start + first.shape.matchEnd, text: '-' }]);
+  selectionStatus.textContent = 'Dodano łuk łączący';
+}
+
+function addSlur(): void {
+  if (!canAddSlur()) {
+    selectionStatus.textContent = 'Wybierz co najmniej dwie kolejne nuty w jednym głosie';
+    return;
+  }
+  const notes = getContiguousSelectedNotes();
+  if (!notes) return;
+  const first = notes[0];
+  const last = notes[notes.length - 1];
+  insertNotationMarkers([
+    { position: first.range.start + first.shape.matchStart, text: '(' },
+    { position: last.range.start + last.shape.matchEnd, text: ')' },
+  ]);
+  selectionStatus.textContent = 'Dodano łuk frazowy';
+}
+
+function removeSelectedArcs(): void {
+  const markers = findSelectedArcMarkers();
+  if (!markers.length) {
+    selectionStatus.textContent = 'W zaznaczeniu nie znaleziono łuku do usunięcia';
+    return;
+  }
+  let nextCode = code;
+  for (const position of [...markers].sort((left, right) => right - left)) {
+    nextCode = nextCode.slice(0, position) + nextCode.slice(position + 1);
+  }
+  const ranges = selectedRanges.map((range) => ({
+    start: range.start - markers.filter((position) => position < range.start).length,
+    end: range.end - markers.filter((position) => position < range.end).length,
+  }));
+  updateCode(nextCode, true, ranges);
+  selectionStatus.textContent = 'Usunięto łuk';
+}
+
+function navigateSelectedNote(direction: -1 | 1): boolean {
+  if (!selectedRanges.length) return false;
+  const anchorRange = direction < 0 ? selectedRanges[0] : selectedRanges[selectedRanges.length - 1];
+  const anchor = (visualObjects[0]?.getSelectableArray() ?? []).find((selectable) => {
+    const range = getSelectableRange(selectable);
+    return range?.start === anchorRange.start && range.end === anchorRange.end;
+  });
+  if (!anchor) return false;
+  const voice = getSelectableVoice(anchor);
+  if (voice === null) return false;
+  const voiceNotes = (visualObjects[0]?.getSelectableArray() ?? [])
+    .filter((selectable) => getSelectableVoice(selectable) === voice)
+    .flatMap((selectable) => {
+      const range = getSelectableRange(selectable);
+      const shape = range ? findNoteShape(code.slice(range.start, range.end)) : null;
+      return range && shape && selectable.absEl.abcelem.pitches?.length === 1 && !selectable.absEl.abcelem.rest
+        ? [{ selectable, range }]
+        : [];
+    })
+    .sort((left, right) => left.range.start - right.range.start);
+  const index = voiceNotes.findIndex(({ range }) => range.start === anchorRange.start && range.end === anchorRange.end);
+  if (index < 0) return false;
+  const next = voiceNotes[index + direction];
+  if (!next) return true;
+  setSelectedRanges([next.range]);
+  editor.focus();
+  editor.setSelectionRange(next.range.start, next.range.end);
+  const element = next.selectable.absEl.abcelem;
+  selectionStatus.textContent = `Zaznaczono nutę · takt ${element.barNumber ?? 1}`;
+  return true;
 }
 
 function showMixedDuration(): void {
@@ -1047,6 +1238,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) =
       case 'redo': redo(); break;
       case 'delete': deleteSelection(); break;
       case 'merge': mergeSelectedNotes(); break;
+      case 'tie': addTie(); break;
+      case 'slur': addSlur(); break;
+      case 'remove-arc': removeSelectedArcs(); break;
       case 'play': void togglePlayback(); break;
     }
   });
@@ -1111,6 +1305,15 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (selectedRanges.length && !event.altKey && !event.ctrlKey && !event.metaKey
+    && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+    && !(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement)
+    && (!(target instanceof HTMLTextAreaElement) || (target === editor && editorSelectionMatchesNotes()))) {
+    if (navigateSelectedNote(event.key === 'ArrowLeft' ? -1 : 1)) {
+      event.preventDefault();
+      return;
+    }
+  }
+  if (selectedRanges.length && !event.altKey && !event.ctrlKey && !event.metaKey
     && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
     && !(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement)) {
     event.preventDefault();
@@ -1119,6 +1322,7 @@ document.addEventListener('keydown', (event) => {
     if (edit.code !== code) {
       updateCode(edit.code, true, edit.ranges);
       document.querySelector('#selection-status')!.textContent = 'Zaznaczenie transponowane';
+      void previewSelectedNotes(edit.ranges);
     }
     return;
   }
