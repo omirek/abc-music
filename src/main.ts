@@ -32,7 +32,7 @@ app.innerHTML = `
       </div>
       <span class="toolbar-divider"></span>
       <label class="control-label">Wartość
-        <select id="duration" aria-label="Wartość rytmiczna">
+        <select id="duration" aria-label="Wartość rytmiczna zaznaczonej nuty lub nowej nuty">
           <option value="1">Cała</option>
           <option value="0.5">Półnuta</option>
           <option value="0.25" selected>Ćwierćnuta</option>
@@ -52,7 +52,7 @@ app.innerHTML = `
         </select>
       </label>
       <label class="control-label accidental-control">Znak
-        <select id="accidental" aria-label="Znak chromatyczny">
+        <select id="accidental" aria-label="Znak chromatyczny zaznaczonej nuty lub nowej nuty">
           <option value="">♮ Auto</option>
           <option value="^">♯ Krzyżyk</option>
           <option value="_">♭ Bemol</option>
@@ -60,6 +60,7 @@ app.innerHTML = `
         </select>
       </label>
       <div class="toolbar-spacer"></div>
+      <button class="button button-quiet merge-button" data-action="merge" title="Połącz dwie sąsiadujące nuty o tej samej wysokości" aria-label="Połącz zaznaczone nuty" disabled>Połącz</button>
       <button class="icon-button delete-button" data-action="delete" title="Usuń zaznaczenie" aria-label="Usuń zaznaczenie">⌫</button>
       <button class="play-button" data-action="play" title="Odtwórz od początku lub od zaznaczonej nuty"><span class="play-icon" aria-hidden="true">▶</span><span id="play-label">Odtwórz</span></button>
     </section>
@@ -78,7 +79,7 @@ app.innerHTML = `
         </div>
         <div class="score-footer">
           <span class="selection-status" id="selection-status">Gotowe do edycji</span>
-          <span class="score-hint" id="score-hint">Kliknij nutę, aby odsłuchać; ▶ odtwarza od zaznaczonej nuty; przeciągnij ją, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką</span>
+          <span class="score-hint" id="score-hint">Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką</span>
         </div>
       </section>
 
@@ -103,6 +104,8 @@ const validation = document.querySelector<HTMLDivElement>('#validation')!;
 const durationControl = document.querySelector<HTMLSelectElement>('#duration')!;
 const octaveControl = document.querySelector<HTMLSelectElement>('#octave')!;
 const accidentalControl = document.querySelector<HTMLSelectElement>('#accidental')!;
+const selectionStatus = document.querySelector<HTMLSpanElement>('#selection-status')!;
+const mergeButton = document.querySelector<HTMLButtonElement>('[data-action="merge"]')!;
 const ABCJS_PITCH_STEP = 30 * 93 / 720;
 let history = new History(STARTER_ABC);
 let code = STARTER_ABC;
@@ -169,6 +172,7 @@ function renderScore(): void {
     score.append(item);
   }
   applySelectionStyles();
+  refreshSelectionControls();
 }
 
 function updateMetadata(): void {
@@ -251,7 +255,7 @@ function changeTool(nextTool: Tool): void {
     button.classList.toggle('active', button.dataset.tool === tool);
   });
   const hints: Record<Tool, string> = {
-    select: 'Kliknij nutę, aby odsłuchać; ▶ odtwarza od zaznaczonej nuty; przeciągnij ją, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
+    select: 'Kliknij nutę, aby odsłuchać; Shift-klik dodaje nutę do zaznaczenia; spacja odtwarza; przeciągnij nutę, aby zmienić wysokość lub pozycję; przeciągnij puste miejsce, aby zaznaczyć ramką',
     note: 'Kliknij partyturę, aby wstawić nutę',
     rest: 'Kliknij partyturę, aby wstawić pauzę',
   };
@@ -302,7 +306,9 @@ function onScoreElement(
   setSelectedRanges([range]);
   editor.focus();
   editor.setSelectionRange(start, end);
-  document.querySelector('#selection-status')!.textContent = `Zaznaczono: ${element.rest ? 'pauza' : 'nuta'} · takt ${element.barNumber ?? 1}`;
+  document.querySelector('#selection-status')!.textContent = element.rest
+    ? `Zaznaczono: pauza · takt ${element.barNumber ?? 1}`
+    : `${selectedNoteDescription()} · takt ${element.barNumber ?? 1}`;
 }
 
 function getSelectableRange(selectable: ABCJS.Selectable): SourceRange | null {
@@ -320,6 +326,197 @@ function setSelectedRanges(ranges: SourceRange[]): void {
   selectedRanges = [...new Map(ranges.map((range) => [`${range.start}:${range.end}`, range])).values()]
     .sort((left, right) => left.start - right.start);
   applySelectionStyles();
+  refreshSelectionControls();
+}
+
+function refreshSelectionControls(): void {
+  const notes = selectedRanges
+    .map((range) => findNoteShape(code.slice(range.start, range.end)))
+    .filter((shape): shape is NonNullable<typeof shape> => shape !== null);
+  mergeButton.disabled = !canMergeSelectedNotes();
+  if (notes.length === 1 && selectedRanges.length === 1) {
+    const duration = noteDuration(code, notes[0].length);
+    const matchingOption = [...durationControl.options].find((option) =>
+      option.value !== 'mixed' && Math.abs(Number(option.value) - duration) < 0.0001);
+    durationControl.querySelector('[data-current-duration]')?.remove();
+    if (matchingOption) {
+      durationControl.value = matchingOption.value;
+    } else {
+      const option = document.createElement('option');
+      option.dataset.currentDuration = 'true';
+      option.value = String(duration);
+      option.textContent = `Wartość własna (${duration})`;
+      durationControl.append(option);
+      durationControl.value = option.value;
+    }
+    setAccidentalControl(notes[0].accidental);
+    return;
+  }
+  if (notes.length > 1 && notes.length === selectedRanges.length) {
+    const durations = notes.map((shape) => noteDuration(code, shape.length));
+    const sameDuration = durations.every((duration) => Math.abs(duration - durations[0]) < 0.0001);
+    if (sameDuration) {
+      const matchingOption = [...durationControl.options].find((option) =>
+        option.value !== 'mixed' && Math.abs(Number(option.value) - durations[0]) < 0.0001);
+      durationControl.querySelector('[data-current-duration]')?.remove();
+      if (matchingOption) durationControl.value = matchingOption.value;
+      else {
+        const option = document.createElement('option');
+        option.dataset.currentDuration = 'true';
+        option.value = String(durations[0]);
+        option.textContent = `Wartość własna (${durations[0]})`;
+        durationControl.append(option);
+        durationControl.value = option.value;
+      }
+    } else {
+      showMixedDuration();
+    }
+    setAccidentalControl(notes.every((shape) => shape.accidental === notes[0].accidental) ? notes[0].accidental : 'mixed');
+    return;
+  }
+  if (durationControl.value === 'mixed') durationControl.value = '0.25';
+  if (accidentalControl.value === 'mixed') accidentalControl.value = '';
+}
+
+function showMixedDuration(): void {
+  durationControl.querySelector('[data-current-duration]')?.remove();
+  let mixed = [...durationControl.options].find((option) => option.value === 'mixed');
+  if (!mixed) {
+    mixed = document.createElement('option');
+    mixed.value = 'mixed';
+    mixed.textContent = 'Wartości różne';
+    mixed.disabled = true;
+    durationControl.append(mixed);
+  }
+  durationControl.value = 'mixed';
+}
+
+function setAccidentalControl(value: string): void {
+  accidentalControl.querySelector('[data-current-accidental]')?.remove();
+  if (value === 'mixed') {
+    const option = document.createElement('option');
+    option.dataset.currentAccidental = 'true';
+    option.value = 'mixed';
+    option.textContent = 'Znaki różne';
+    option.disabled = true;
+    accidentalControl.append(option);
+    accidentalControl.value = option.value;
+  } else {
+    const matchingOption = [...accidentalControl.options].find((option) => option.value === value);
+    if (matchingOption) {
+      accidentalControl.value = value;
+    } else {
+      const option = document.createElement('option');
+      option.dataset.currentAccidental = 'true';
+      option.value = value;
+      option.textContent = value === '^^' ? '♯♯ Podwójny krzyżyk' : '♭♭ Podwójny bemol';
+      accidentalControl.append(option);
+      accidentalControl.value = value;
+    }
+  }
+}
+
+function noteDuration(source: string, suffix: string): number {
+  const unitMatch = /^L:\s*(\d+)\s*\/\s*(\d+)/m.exec(source);
+  const unit = unitMatch ? Number(unitMatch[1]) / Number(unitMatch[2]) : 1 / 8;
+  if (!suffix) return unit;
+  if (/^\d+(?:\/\d+)?$/.test(suffix)) {
+    const [numerator, denominator = '1'] = suffix.split('/');
+    return unit * Number(numerator) / Number(denominator);
+  }
+  const numerator = /^(\d+)\/$/.exec(suffix)?.[1];
+  if (numerator) return unit * Number(numerator) / 2;
+  if (/^\/+$/.test(suffix)) return unit / (2 ** suffix.length);
+  const denominator = /^\/(\d+)$/.exec(suffix)?.[1];
+  return denominator ? unit / Number(denominator) : unit;
+}
+
+function canMergeSelectedNotes(): boolean {
+  if (selectedRanges.length !== 2) return false;
+  const [first, second] = selectedRanges;
+  const selected = (visualObjects[0]?.getSelectableArray() ?? [])
+    .filter((selectable) => {
+      const range = getSelectableRange(selectable);
+      return range && selectedRanges.some((item) => item.start === range.start && item.end === range.end);
+    });
+  if (selected.length !== 2 || getSelectableVoice(selected[0]) === null
+    || getSelectableVoice(selected[0]) !== getSelectableVoice(selected[1])) return false;
+  const firstShape = findNoteShape(code.slice(first.start, first.end));
+  const secondShape = findNoteShape(code.slice(second.start, second.end));
+  if (!firstShape || !secondShape || firstShape.letter !== secondShape.letter
+    || firstShape.octave !== secondShape.octave || firstShape.accidental !== secondShape.accidental) return false;
+  const voice = getSelectableVoice(selected[0]);
+  const between = (visualObjects[0]?.getSelectableArray() ?? [])
+    .filter((selectable) => getSelectableVoice(selectable) === voice)
+    .map(getSelectableRange)
+    .filter((range): range is SourceRange => range !== null && range.start >= first.end && range.end <= second.start
+      && !selectedRanges.some((selectedRange) => selectedRange.start === range.start && selectedRange.end === range.end));
+  return between.length === 0;
+}
+
+function mergeSelectedNotes(): void {
+  if (!canMergeSelectedNotes()) {
+    selectionStatus.textContent = 'Wybierz dwie sąsiadujące nuty o tej samej wysokości w jednym głosie';
+    return;
+  }
+  const [first, second] = selectedRanges;
+  const firstShape = findNoteShape(code.slice(first.start, first.end));
+  const secondShape = findNoteShape(code.slice(second.start, second.end));
+  if (!firstShape || !secondShape) return;
+  const mergedLength = noteLengthSuffix(code, noteDuration(code, firstShape.length) + noteDuration(code, secondShape.length));
+  const firstTokenStart = first.start + firstShape.matchStart;
+  const firstTokenEnd = first.start + firstShape.matchEnd;
+  const secondTokenStart = second.start + secondShape.matchStart;
+  const secondTokenEnd = second.start + secondShape.matchEnd;
+  const mergedToken = makeNoteToken(firstShape.letter, firstShape.octave, firstShape.accidental, mergedLength);
+  let nextCode = code.slice(0, secondTokenStart) + code.slice(secondTokenEnd);
+  nextCode = nextCode.slice(0, firstTokenStart) + mergedToken + nextCode.slice(firstTokenEnd);
+  const newFirst = { start: first.start, end: first.end + mergedToken.length - (firstTokenEnd - firstTokenStart) };
+  updateCode(nextCode, true, [newFirst]);
+  selectionStatus.textContent = 'Nuty połączone';
+}
+
+function editSelectedNotes(change: (shape: NonNullable<ReturnType<typeof findNoteShape>>) => string): void {
+  const replacements = selectedRanges.flatMap((range) => {
+    const sourceShape = findNoteShape(code.slice(range.start, range.end));
+    if (!sourceShape) return [];
+    const tokenStart = range.start + sourceShape.matchStart;
+    const tokenEnd = range.start + sourceShape.matchEnd;
+    const token = change(sourceShape);
+    return [{ range, tokenStart, tokenEnd, token }];
+  });
+  if (!replacements.length) {
+    selectionStatus.textContent = 'Zaznacz nutę, aby zmienić jej wartość lub znak';
+    return;
+  }
+  let nextCode = code;
+  for (const replacement of [...replacements].reverse()) {
+    nextCode = nextCode.slice(0, replacement.tokenStart) + replacement.token
+      + nextCode.slice(replacement.tokenEnd);
+  }
+  let offset = 0;
+  const nextRanges = replacements.map(({ range, tokenStart, tokenEnd, token }) => {
+    const nextRange = {
+      start: range.start + offset,
+      end: range.end + offset + token.length - (tokenEnd - tokenStart),
+    };
+    offset += token.length - (tokenEnd - tokenStart);
+    return nextRange;
+  });
+  if (nextCode !== code) updateCode(nextCode, true, nextRanges);
+}
+
+function accidentalLabel(accidental: string): string {
+  return ({ '': '♮', '^': '♯', '_': '♭', '=': '♮', '^^': '♯♯', '__': '♭♭' } as Record<string, string>)[accidental] ?? '';
+}
+
+function selectedNoteDescription(): string {
+  const shape = selectedRanges.length === 1
+    ? findNoteShape(code.slice(selectedRanges[0].start, selectedRanges[0].end))
+    : null;
+  if (!shape) return `Zaznaczono ${selectedRanges.length} elementów`;
+  const duration = durationControl.selectedOptions[0]?.textContent ?? 'Wartość';
+  return `Zaznaczono nutę · wartość: ${duration} · znak: ${accidentalLabel(shape.accidental)}`;
 }
 
 function selectEditorRanges(ranges: SourceRange[]): void {
@@ -327,6 +524,12 @@ function selectEditorRanges(ranges: SourceRange[]): void {
   const first = ranges[0];
   const last = ranges[ranges.length - 1];
   editor.setSelectionRange(first.start, last.end);
+}
+
+function editorSelectionMatchesNotes(): boolean {
+  return selectedRanges.length > 0
+    && editor.selectionStart === selectedRanges[0].start
+    && editor.selectionEnd === selectedRanges[selectedRanges.length - 1].end;
 }
 
 function syncScoreSelectionFromEditor(): void {
@@ -370,8 +573,11 @@ function onScorePointerDown(event: PointerEvent): void {
   const selectable = selectableFromTarget(target);
   const range = selectable ? getSelectableRange(selectable) : null;
   if (selectable && range) {
-    const ranges = selectedRanges.length > 1 && isRangeSelected(range) ? selectedRanges : [range];
+    const ranges = event.shiftKey
+      ? [...selectedRanges, range]
+      : selectedRanges.length > 1 && isRangeSelected(range) ? selectedRanges : [range];
     setSelectedRanges(ranges);
+    selectEditorRanges(selectedRanges);
     scoreGesture = {
       kind: 'notes',
       pointerId: event.pointerId,
@@ -483,7 +689,7 @@ function onScorePointerUp(event: PointerEvent): void {
     setSelectedRanges(ranges);
     selectEditorRanges(ranges);
     document.querySelector('#selection-status')!.textContent = ranges.length
-      ? `Zaznaczono ${ranges.length} ${ranges.length === 1 ? 'element' : ranges.length < 5 ? 'elementy' : 'elementów'}`
+      ? selectedRanges.length === 1 ? selectedNoteDescription() : `Zaznaczono ${ranges.length} elementów`
       : 'Nie zaznaczono elementów';
     return;
   }
@@ -840,6 +1046,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) =
       case 'undo': undo(); break;
       case 'redo': redo(); break;
       case 'delete': deleteSelection(); break;
+      case 'merge': mergeSelectedNotes(); break;
       case 'play': void togglePlayback(); break;
     }
   });
@@ -850,6 +1057,25 @@ document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => 
 });
 
 editor.addEventListener('input', scheduleRender);
+durationControl.addEventListener('change', () => {
+  const duration = Number(durationControl.value);
+  if (!selectedRanges.length || !Number.isFinite(duration)) return;
+  editSelectedNotes((shape) => makeNoteToken(
+    shape.letter,
+    shape.octave,
+    shape.accidental,
+    noteLengthSuffix(code, duration),
+  ));
+});
+accidentalControl.addEventListener('change', () => {
+  if (!selectedRanges.length || accidentalControl.value === 'mixed') return;
+  editSelectedNotes((shape) => makeNoteToken(
+    shape.letter,
+    shape.octave,
+    accidentalControl.value,
+    shape.length,
+  ));
+});
 editor.addEventListener('select', syncScoreSelectionFromEditor);
 editor.addEventListener('pointerdown', () => setSelectedRanges([]));
 editor.addEventListener('scroll', () => {
@@ -866,12 +1092,24 @@ fileInput.addEventListener('change', async () => {
 });
 
 document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  const isTypingTarget = target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target instanceof HTMLButtonElement
+    || (target instanceof HTMLElement && target.isContentEditable);
+  const isSelectedNoteInEditor = target === editor && editorSelectionMatchesNotes();
+  if ((event.code === 'Space' || event.key === ' ') && !event.repeat
+    && !event.altKey && !event.ctrlKey && !event.metaKey && (!isTypingTarget || isSelectedNoteInEditor)) {
+    event.preventDefault();
+    void togglePlayback();
+    return;
+  }
   if (event.key === 'Delete' && selectedRanges.length) {
     event.preventDefault();
     deleteSelection();
     return;
   }
-  const target = event.target;
   if (selectedRanges.length && !event.altKey && !event.ctrlKey && !event.metaKey
     && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
     && !(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement)) {

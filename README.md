@@ -33,8 +33,14 @@ poleceniem `npm run build:pages`.
 	wartość rytmiczną, oktawę i znak chromatyczny na pasku narzędzi.
 - W trybie zaznaczania kliknij nutę, aby odsłuchać jej dźwięk; przy kliknięciu
 	nuty należącej do wielokrotnego zaznaczenia odtworzy się ono jako akord.
+	Shift-klik dodaje nutę do zaznaczenia, a spacja rozpoczyna lub zatrzymuje
+	odtwarzanie (poza polami tekstowymi i kontrolkami).
 	Przycisk „Odtwórz” rozpoczyna odtwarzanie od pierwszej zaznaczonej nuty
 	albo od początku utworu, jeśli nic nie zaznaczono.
+	Po zaznaczeniu nuty paski „Wartość” i „Znak” pokazują jej bieżące ustawienia;
+	zmiana listy edytuje zaznaczone nuty. Zaznacz dwie sąsiadujące nuty o tej
+	samej wysokości w jednym głosie i wybierz „Połącz”, aby zastąpić je jedną
+	nutą o łącznej wartości.
 	Przeciągnij nutę w pionie, aby zmienić jej wysokość. Zaznaczone nuty można
 	przesuwać strzałkami w górę i w dół, a klawiszem Delete albo przyciskiem
 	„Usuń zaznaczenie” usuwać zaznaczenie.

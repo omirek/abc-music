@@ -23,6 +23,7 @@ button { color: inherit; }
 .button, .play-button { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 700; transition: background .16s ease, color .16s ease, border-color .16s ease; }
 .button-quiet { border-color: #d6dbd4; background: #fbfaf6; }
 .button-quiet:hover { background: #f0f2ec; }
+.button:disabled { opacity: .45; cursor: not-allowed; }
 .button-primary, .play-button { color: #fffdf8; background: #1d6458; }
 .button-primary:hover, .play-button:hover { background: #144c43; }
 .button span[aria-hidden="true"] { font-size: 17px; line-height: 1; }
@@ -80,7 +81,6 @@ button { color: inherit; }
   .workbench { grid-template-columns: minmax(0, 1.2fr) minmax(330px, .9fr); }
   .panel-heading { padding-inline: 22px; }
   .score-scroll { padding-inline: 14px; }
-  .accidental-control { display: none; }
 }
 
 @media (max-width: 760px) {
