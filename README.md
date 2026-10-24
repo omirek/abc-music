@@ -58,4 +58,5 @@ poleceniem `npm run build:pages`.
 
 Importowany ABC jest zachowywany w całości jako tekst, ale edytor wizualny
 odtwarza i edytuje pierwszy utwór z pliku. Dźwięk używa syntezatora
-oscylatorowego przeglądarki.
+oscylatorowego przeglądarki. Nazwy akordów zapisane w cudzysłowach, np.
+`"Am"`, są odtwarzane jako akompaniament podczas odtwarzania utworu.

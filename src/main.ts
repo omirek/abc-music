@@ -1178,9 +1178,20 @@ async function togglePlayback(): Promise<void> {
   }
   if (audioContext && audioContext.state !== 'closed') void audioContext.close();
   audioContext = new AudioContextConstructor();
-  await audioContext.resume();
+  try {
+    await audioContext.resume();
+  } catch (error) {
+    document.querySelector('#selection-status')!.textContent = error instanceof Error
+      ? `Nie można odtworzyć dźwięku: ${error.message}`
+      : 'Nie można odtworzyć dźwięku';
+    audioContext = null;
+    return;
+  }
   const context = audioContext;
-  tune.setUpAudio({});
+  const audioTracks = tune.setUpAudio({});
+  const meter = tune.getMeterFraction();
+  const measureLength = meter.den ? meter.num / meter.den : 1;
+  const secondsPerWholeNote = tune.millisecondsPerMeasure(audioTracks.tempo) / 1000 / measureLength;
   let timer: ABCJS.TimingCallbacks;
   timer = new ABCJS.TimingCallbacks(tune, {
     eventCallback(event) {
@@ -1208,20 +1219,44 @@ async function togglePlayback(): Promise<void> {
       return starts.some((start, index) => start === range.start
         || (ends[index] !== undefined && start < range.end && ends[index] > range.start));
     }));
-  timer.start(selectedEvent ? selectedEvent.milliseconds / 1000 : 0, 'seconds');
+  const startTime = selectedEvent ? selectedEvent.milliseconds / 1000 : 0;
+  scheduleChordAccompaniment(context, audioTracks.tracks, secondsPerWholeNote, startTime);
+  timer.start(startTime, 'seconds');
   document.querySelector('#play-label')!.textContent = 'Zatrzymaj';
   document.querySelector('.play-icon')!.textContent = '■';
 }
 
-function playTone(context: AudioContext, midiPitch: number, duration: number): void {
+function scheduleChordAccompaniment(
+  context: AudioContext,
+  tracks: ABCJS.AudioTracks['tracks'],
+  secondsPerWholeNote: number,
+  playbackOffset: number,
+): void {
+  for (const item of tracks.flat()) {
+    if (item.cmd !== 'note' || Number.isFinite(item.startChar)) continue;
+    const noteStart = item.start * secondsPerWholeNote;
+    const noteEnd = (item.start + item.duration) * secondsPerWholeNote;
+    if (noteEnd <= playbackOffset) continue;
+    const startTime = context.currentTime + Math.max(0, noteStart - playbackOffset);
+    const duration = noteEnd - Math.max(noteStart, playbackOffset);
+    playTone(context, item.pitch, duration, startTime, item.volume / 64 * 0.075);
+  }
+}
+
+function playTone(
+  context: AudioContext,
+  midiPitch: number,
+  duration: number,
+  start = context.currentTime,
+  volume = 0.075,
+): void {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  const start = context.currentTime;
   const end = start + duration;
   oscillator.type = 'triangle';
   oscillator.frequency.value = 440 * (2 ** ((midiPitch - 69) / 12));
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.075, start + 0.018);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), start + 0.018);
   gain.gain.exponentialRampToValueAtTime(0.0001, Math.max(start + 0.04, end));
   oscillator.connect(gain);
   gain.connect(context.destination);
